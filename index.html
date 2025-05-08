@@ -1,100 +1,694 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Snake Game - WASD Controls</title>
+    <title>Pixel Snake ∞ (Non-Overlapping Food)</title>
     <style>
-        canvas {
-            border: 1px solid #444;
-            background-color: #000;
-        }
         body {
             margin: 0;
+            padding: 0;
+            background-color: #222;
+            font-family: 'Courier New', monospace;
+            color: #fff;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             align-items: center;
-            height: 100vh;
-            background-color: #1a1a1a;
+            min-height: 100vh;
+        }
+        #game-container {
+            display: flex;
+            margin-top: 20px;
+        }
+        canvas {
+            border: 4px solid #555;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #sidebar {
+            width: 250px;
+            margin-left: 20px;
+            background-color: #333;
+            padding: 15px;
+            border: 4px solid #555;
+        }
+        #score-display {
+            margin-bottom: 20px;
+        }
+        #leaderboard {
+            margin-top: 20px;
+        }
+        h1 {
+            color: #4CAF50;
+            text-shadow: 2px 2px #000;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+        }
+        input {
+            font-family: 'Courier New', monospace;
+            padding: 5px;
+        }
+        .pixel-font {
+            font-family: 'Courier New', monospace;
         }
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas" width="300" height="300"></canvas>
+    <h1>PIXEL SNAKE ∞</h1>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="400" height="400"></canvas>
+        <div id="sidebar">
+            <div id="score-display">
+                <h3>PLAYER: <span id="player-name">GUEST</span></h3>
+                <h3>SCORE: <span id="current-score">0</span></h3>
+                <h3>HIGH SCORE: <span id="high-score">0</span></h3>
+                <h3>FOODS: <span id="food-count">0</span></h3>
+            </div>
+            <div id="controls">
+                <div>
+                    <input type="text" id="name-input" placeholder="Enter your name" maxlength="12">
+                    <button id="save-name">SAVE</button>
+                </div>
+                <button id="start-btn">START GAME</button>
+                <button id="pause-btn" disabled>PAUSE</button>
+            </div>
+            <div id="leaderboard">
+                <h3>LEADERBOARD</h3>
+                <ol id="leaderboard-list"></ol>
+            </div>
+        </div>
+    </div>
 
     <script>
+        // 游戏配置（慢速版）
+        const config = {
+            cellSize: 16,
+            snakeSpeed: 1,           // 蛇的移动速度（数值越小越慢）
+            initialLength: 2,        // 初始长度
+            minVisibleFoods: 4,      // 可见范围内最少食物数量
+            foodSpawnRange: 15,      // 食物生成范围（15x15网格）
+            foodSpacing: 4,          // 食物间最小间距（4x4网格）
+            maxLeaderboardEntries: 10
+        };
+
+        // 游戏状态
+        const state = {
+            snake: [],
+            direction: { x: 1, y: 0 },
+            nextDirection: { x: 1, y: 0 },
+            foods: [],               // 食物数组
+            score: 0,
+            highScore: 0,
+            isRunning: false,
+            isPaused: false,
+            playerName: 'GUEST',
+            camera: { x: 0, y: 0 },
+            lastUpdateTime: 0,
+            leaderboard: []
+        };
+
+        // DOM元素
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const gridSize = 15;
-        const tileCount = canvas.width / gridSize;
-        
-        let snake = [{x: 10, y: 10}];
-        let food = generateFood();
-        let dx = 1, dy = 0;
-        let gameSpeed = 100;
+        const nameInput = document.getElementById('name-input');
+        const saveNameBtn = document.getElementById('save-name');
+        const startBtn = document.getElementById('start-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const playerNameDisplay = document.getElementById('player-name');
+        const currentScoreDisplay = document.getElementById('current-score');
+        const highScoreDisplay = document.getElementById('high-score');
+        const foodCountDisplay = document.getElementById('food-count');
+        const leaderboardList = document.getElementById('leaderboard-list');
 
-        function gameLoop() {
-            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
-            
-            // Wall passthrough
-            if (head.x < 0) head.x = tileCount - 1;
-            if (head.x >= tileCount) head.x = 0;
-            if (head.y < 0) head.y = tileCount - 1;
-            if (head.y >= tileCount) head.y = 0;
-            
-            snake.unshift(head);
-
-            if (head.x === food.x && head.y === food.y) {
-                food = generateFood();
-                gameSpeed = Math.max(50, gameSpeed - 2);
-            } else {
-                snake.pop();
+        // 初始化游戏
+        function initGame() {
+            // 设置玩家名称
+            const savedName = localStorage.getItem('snakePlayerName');
+            if (savedName) {
+                state.playerName = savedName;
+                nameInput.value = savedName;
+                playerNameDisplay.textContent = savedName;
             }
 
-            // Check self collision (lose 1 body if more than 1 segment)
-            const selfCollisionIndex = snake.findIndex((seg, i) => i > 0 && seg.x === head.x && seg.y === head.y);
-            if (selfCollisionIndex !== -1 && snake.length > 1) {
-                snake = snake.slice(0, snake.length - 1); // Remove last segment
-            }
+            // 加载排行榜
+            loadLeaderboard();
 
+            // 设置事件监听器
+            saveNameBtn.addEventListener('click', savePlayerName);
+            startBtn.addEventListener('click', startGame);
+            pauseBtn.addEventListener('click', togglePause);
+            document.addEventListener('keydown', handleKeyPress);
+
+            // 初始化游戏视图
+            drawStartScreen();
+        }
+
+        // 绘制开始屏幕
+        function drawStartScreen() {
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             ctx.fillStyle = '#4CAF50';
-            snake.forEach(segment => {
-                ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize - 1, gridSize - 1);
-            });
-
-            ctx.fillStyle = '#FF5252';
-            ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize - 1, gridSize - 1);
-
-            setTimeout(gameLoop, gameSpeed);
+            ctx.font = '20px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText('PIXEL SNAKE ∞', canvas.width/2, canvas.height/2 - 40);
+            
+            ctx.font = '16px "Courier New"';
+            ctx.fillText('NON-OVERLAPPING FOOD', canvas.width/2, canvas.height/2);
+            ctx.fillText('PRESS START BUTTON', canvas.width/2, canvas.height/2 + 40);
+            ctx.fillText('OR SPACE KEY', canvas.width/2, canvas.height/2 + 60);
+            
+            ctx.font = '14px "Courier New"';
+            ctx.fillText('CONTROLS: WASD OR ARROW KEYS', canvas.width/2, canvas.height/2 + 100);
         }
 
-        function generateFood() {
-            let newFood;
-            do {
-                newFood = {
-                    x: Math.floor(Math.random() * tileCount),
-                    y: Math.floor(Math.random() * tileCount)
-                };
-            } while (snake.some(seg => seg.x === newFood.x && seg.y === newFood.y));
-            return newFood;
-        }
-
-        document.addEventListener('keydown', (e) => {
-            switch(e.key.toLowerCase()) {
-                case 'w': if (dy === 0) { dx = 0; dy = -1; } break;
-                case 's': if (dy === 0) { dx = 0; dy = 1; } break;
-                case 'a': if (dx === 0) { dx = -1; dy = 0; } break;
-                case 'd': if (dx === 0) { dx = 1; dy = 0; } break;
-                case 'arrowup': if (dy === 0) { dx = 0; dy = -1; } break;
-                case 'arrowdown': if (dy === 0) { dx = 0; dy = 1; } break;
-                case 'arrowleft': if (dx === 0) { dx = -1; dy = 0; } break;
-                case 'arrowright': if (dx === 0) { dx = 1; dy = 0; } break;
-                case '`': window.open('https://en.wikipedia.org/wiki/Snake_(video_game)');
+        // 开始游戏
+        function startGame() {
+            if (state.isRunning) return;
+            
+            // 初始化蛇
+            state.snake = [];
+            const startX = Math.floor(canvas.width / 2 / config.cellSize) * config.cellSize;
+            const startY = Math.floor(canvas.height / 2 / config.cellSize) * config.cellSize;
+            
+            for (let i = 0; i < config.initialLength; i++) {
+                state.snake.push({
+                    x: startX - i * config.cellSize,
+                    y: startY
+                });
             }
-        });
+            
+            // 重置游戏状态
+            state.direction = { x: 1, y: 0 };
+            state.nextDirection = { x: 1, y: 0 };
+            state.score = 0;
+            state.foods = [];
+            state.camera = { x: 0, y: 0 };
+            state.isRunning = true;
+            state.isPaused = false;
+            
+            // 生成初始食物
+            spawnInitialFoods();
+            
+            // 更新UI
+            currentScoreDisplay.textContent = '0';
+            updateFoodCountDisplay();
+            startBtn.disabled = true;
+            pauseBtn.disabled = false;
+            
+            // 开始游戏循环
+            state.lastUpdateTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
 
-        gameLoop();
+        // 生成初始食物
+        function spawnInitialFoods() {
+            // 确保可见范围内至少有minVisibleFoods个食物
+            while (getVisibleFoods().length < config.minVisibleFoods) {
+                spawnFoodInViewport();
+            }
+        }
+
+        // 获取当前可见的食物
+        function getVisibleFoods() {
+            const viewport = {
+                x: state.camera.x,
+                y: state.camera.y,
+                width: canvas.width,
+                height: canvas.height
+            };
+            
+            return state.foods.filter(food => 
+                food.x >= viewport.x && 
+                food.x <= viewport.x + viewport.width &&
+                food.y >= viewport.y && 
+                food.y <= viewport.y + viewport.height
+            );
+        }
+
+        // 游戏主循环
+        function gameLoop(timestamp) {
+            if (!state.isRunning || state.isPaused) return;
+            
+            const deltaTime = timestamp - state.lastUpdateTime;
+            const moveInterval = 1000 / (config.snakeSpeed * 8); // 调整移动间隔使速度更慢
+            
+            if (deltaTime >= moveInterval) {
+                updateGame();
+                state.lastUpdateTime = timestamp - (deltaTime % moveInterval);
+            }
+            
+            renderGame();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 更新游戏状态
+        function updateGame() {
+            // 更新方向
+            state.direction = { ...state.nextDirection };
+            
+            // 移动蛇
+            const head = {
+                x: state.snake[0].x + state.direction.x * config.cellSize,
+                y: state.snake[0].y + state.direction.y * config.cellSize
+            };
+            
+            state.snake.unshift(head);
+            state.snake.pop();
+            
+            // 检查食物碰撞
+            let foodEaten = false;
+            for (let i = state.foods.length - 1; i >= 0; i--) {
+                if (checkCollision(state.snake[0], state.foods[i], config.cellSize / 2)) {
+                    // 吃到食物
+                    state.score++;
+                    currentScoreDisplay.textContent = state.score;
+                    
+                    // 增加蛇长度
+                    state.snake.push({ ...state.snake[state.snake.length - 1] });
+                    
+                    // 移除被吃的食物
+                    state.foods.splice(i, 1);
+                    foodEaten = true;
+                }
+            }
+            
+            // 确保可见范围内至少有minVisibleFoods个食物
+            const visibleFoods = getVisibleFoods();
+            if (visibleFoods.length < config.minVisibleFoods) {
+                const foodsToAdd = config.minVisibleFoods - visibleFoods.length;
+                for (let i = 0; i < foodsToAdd; i++) {
+                    spawnFoodInViewport();
+                }
+            }
+            
+            // 更新食物计数显示
+            updateFoodCountDisplay();
+            
+            // 检查自我碰撞
+            for (let i = 4; i < state.snake.length; i++) {
+                if (checkCollision(state.snake[0], state.snake[i], config.cellSize / 2)) {
+                    gameOver();
+                    return;
+                }
+            }
+            
+            // 更新摄像机位置
+            updateCamera();
+        }
+
+        // 在视口范围内生成食物（确保不与其他食物重叠4x4范围）
+        function spawnFoodInViewport() {
+            const viewport = {
+                x: state.camera.x,
+                y: state.camera.y,
+                width: canvas.width,
+                height: canvas.height
+            };
+            
+            let foodX, foodY;
+            let attempts = 0;
+            const maxAttempts = 100;
+            const spacing = config.foodSpacing * config.cellSize;
+            
+            do {
+                // 在视口范围内随机生成
+                foodX = viewport.x + Math.random() * viewport.width;
+                foodY = viewport.y + Math.random() * viewport.height;
+                
+                // 对齐网格
+                foodX = Math.floor(foodX / config.cellSize) * config.cellSize;
+                foodY = Math.floor(foodY / config.cellSize) * config.cellSize;
+                
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    // 如果找不到合适位置，尝试在蛇头附近生成
+                    return spawnFoodNearHead();
+                }
+            } while (
+                // 不与蛇身重叠
+                state.snake.some(segment => 
+                    Math.abs(segment.x - foodX) < config.cellSize && 
+                    Math.abs(segment.y - foodY) < config.cellSize
+                ) ||
+                // 不与其他食物重叠4x4范围
+                state.foods.some(food => 
+                    Math.abs(food.x - foodX) < spacing && 
+                    Math.abs(food.y - foodY) < spacing
+                )
+            );
+            
+            state.foods.push({ x: foodX, y: foodY });
+        }
+
+        // 在蛇头附近生成食物（确保不与其他食物重叠4x4范围）
+        function spawnFoodNearHead() {
+            const head = state.snake.length > 0 ? state.snake[0] : { x: canvas.width/2, y: canvas.height/2 };
+            let foodX, foodY;
+            let attempts = 0;
+            const maxAttempts = 100;
+            const spacing = config.foodSpacing * config.cellSize;
+            
+            do {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = (5 + Math.random() * 10) * config.cellSize;
+                
+                foodX = head.x + Math.cos(angle) * distance;
+                foodY = head.y + Math.sin(angle) * distance;
+                
+                // 确保在画布范围内
+                foodX = Math.max(config.cellSize, Math.min(canvas.width - config.cellSize, foodX));
+                foodY = Math.max(config.cellSize, Math.min(canvas.height - config.cellSize, foodY));
+                
+                // 对齐网格
+                foodX = Math.floor(foodX / config.cellSize) * config.cellSize;
+                foodY = Math.floor(foodY / config.cellSize) * config.cellSize;
+                
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    // 最后手段：随机位置（仍然保证4x4间距）
+                    return spawnFoodRandomWithSpacing();
+                }
+            } while (
+                state.snake.some(segment => 
+                    Math.abs(segment.x - foodX) < config.cellSize && 
+                    Math.abs(segment.y - foodY) < config.cellSize
+                ) ||
+                state.foods.some(food => 
+                    Math.abs(food.x - foodX) < spacing && 
+                    Math.abs(food.y - foodY) < spacing
+                )
+            );
+            
+            state.foods.push({ x: foodX, y: foodY });
+        }
+
+        // 在全地图随机生成食物（保证4x4间距）
+        function spawnFoodRandomWithSpacing() {
+            let foodX, foodY;
+            let attempts = 0;
+            const maxAttempts = 100;
+            const spacing = config.foodSpacing * config.cellSize;
+            const gridWidth = Math.floor(canvas.width / config.cellSize);
+            const gridHeight = Math.floor(canvas.height / config.cellSize);
+            
+            do {
+                foodX = (1 + Math.floor(Math.random() * (gridWidth - 2))) * config.cellSize;
+                foodY = (1 + Math.floor(Math.random() * (gridHeight - 2))) * config.cellSize;
+                
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    // 实在找不到位置，放宽间距要求
+                    return spawnFoodRandom();
+                }
+            } while (
+                state.snake.some(segment => 
+                    Math.abs(segment.x - foodX) < config.cellSize && 
+                    Math.abs(segment.y - foodY) < config.cellSize
+                ) ||
+                state.foods.some(food => 
+                    Math.abs(food.x - foodX) < spacing && 
+                    Math.abs(food.y - foodY) < spacing
+                )
+            );
+            
+            state.foods.push({ x: foodX, y: foodY });
+        }
+
+        // 最后手段：随机生成食物（不保证间距）
+        function spawnFoodRandom() {
+            const gridWidth = Math.floor(canvas.width / config.cellSize);
+            const gridHeight = Math.floor(canvas.height / config.cellSize);
+            
+            let foodX, foodY;
+            let attempts = 0;
+            const maxAttempts = 100;
+            
+            do {
+                foodX = (1 + Math.floor(Math.random() * (gridWidth - 2))) * config.cellSize;
+                foodY = (1 + Math.floor(Math.random() * (gridHeight - 2))) * config.cellSize;
+                
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    // 极端情况下，允许重叠（非常罕见）
+                    break;
+                }
+            } while (
+                state.snake.some(segment => 
+                    Math.abs(segment.x - foodX) < config.cellSize && 
+                    Math.abs(segment.y - foodY) < config.cellSize
+                )
+            );
+            
+            state.foods.push({ x: foodX, y: foodY });
+        }
+
+        // 更新食物计数显示
+        function updateFoodCountDisplay() {
+            foodCountDisplay.textContent = state.foods.length;
+        }
+
+        // 更新摄像机位置
+        function updateCamera() {
+            const head = state.snake[0];
+            const centerX = canvas.width / 2 - config.cellSize / 2;
+            const centerY = canvas.height / 2 - config.cellSize / 2;
+            
+            state.camera.x = head.x - centerX;
+            state.camera.y = head.y - centerY;
+        }
+
+        // 渲染游戏
+        function renderGame() {
+            // 清空画布
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制网格背景
+            drawGrid();
+            
+            // 绘制所有食物
+            state.foods.forEach(food => {
+                ctx.fillStyle = '#FF5252';
+                ctx.fillRect(
+                    food.x - state.camera.x,
+                    food.y - state.camera.y,
+                    config.cellSize,
+                    config.cellSize
+                );
+                
+                // 食物中心的细节
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fillRect(
+                    food.x - state.camera.x + 4,
+                    food.y - state.camera.y + 4,
+                    config.cellSize - 8,
+                    config.cellSize - 8
+                );
+            });
+            
+            // 绘制蛇
+            state.snake.forEach((segment, index) => {
+                const isHead = index === 0;
+                ctx.fillStyle = isHead ? '#76FF03' : '#4CAF50';
+                ctx.fillRect(
+                    segment.x - state.camera.x,
+                    segment.y - state.camera.y,
+                    config.cellSize,
+                    config.cellSize
+                );
+                
+                // 添加像素风格细节
+                ctx.fillStyle = isHead ? '#000' : 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(
+                    segment.x - state.camera.x + 2,
+                    segment.y - state.camera.y + 2,
+                    config.cellSize - 4,
+                    config.cellSize - 4
+                );
+            });
+        }
+
+        // 绘制网格背景
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(80, 80, 80, 0.3)';
+            ctx.lineWidth = 1;
+            
+            const startX = Math.floor(state.camera.x / config.cellSize) * config.cellSize;
+            const startY = Math.floor(state.camera.y / config.cellSize) * config.cellSize;
+            
+            for (let x = startX; x < state.camera.x + canvas.width; x += config.cellSize) {
+                ctx.beginPath();
+                ctx.moveTo(x - state.camera.x, 0);
+                ctx.lineTo(x - state.camera.x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = startY; y < state.camera.y + canvas.height; y += config.cellSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y - state.camera.y);
+                ctx.lineTo(canvas.width, y - state.camera.y);
+                ctx.stroke();
+            }
+        }
+
+        // 游戏结束
+        function gameOver() {
+            state.isRunning = false;
+            
+            // 更新最高分
+            if (state.score > state.highScore) {
+                state.highScore = state.score;
+                highScoreDisplay.textContent = state.highScore;
+                localStorage.setItem('snakeHighScore', state.highScore);
+            }
+            
+            // 添加到排行榜
+            addToLeaderboard(state.playerName, state.score);
+            
+            // 重置UI
+            startBtn.disabled = false;
+            pauseBtn.disabled = true;
+            
+            // 显示游戏结束画面
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#FF5252';
+            ctx.font = '24px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
+            
+            ctx.fillStyle = '#FFF';
+            ctx.font = '16px "Courier New"';
+            ctx.fillText(`SCORE: ${state.score}`, canvas.width/2, canvas.height/2 + 20);
+            ctx.fillText('PRESS START TO PLAY AGAIN', canvas.width/2, canvas.height/2 + 60);
+        }
+
+        // 暂停/继续游戏
+        function togglePause() {
+            if (!state.isRunning) return;
+            
+            state.isPaused = !state.isPaused;
+            pauseBtn.textContent = state.isPaused ? 'RESUME' : 'PAUSE';
+            
+            if (state.isPaused) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '24px "Courier New"';
+                ctx.textAlign = 'center';
+                ctx.fillText('PAUSED', canvas.width/2, canvas.height/2);
+            }
+        }
+
+        // 键盘控制
+        function handleKeyPress(e) {
+            const key = e.key.toLowerCase();
+            const directions = {
+                'w': { x: 0, y: -1 },
+                'arrowup': { x: 0, y: -1 },
+                's': { x: 0, y: 1 },
+                'arrowdown': { x: 0, y: 1 },
+                'a': { x: -1, y: 0 },
+                'arrowleft': { x: -1, y: 0 },
+                'd': { x: 1, y: 0 },
+                'arrowright': { x: 1, y: 0 }
+            };
+            
+            if (directions[key] && state.isRunning && !state.isPaused) {
+                // 防止180度转向
+                if (state.direction.x !== -directions[key].x || 
+                    state.direction.y !== -directions[key].y) {
+                    state.nextDirection = directions[key];
+                }
+            }
+            
+            // 空格键开始/暂停游戏
+            if (key === ' ') {
+                if (!state.isRunning) {
+                    startGame();
+                } else if (state.isRunning) {
+                    togglePause();
+                }
+                e.preventDefault();
+            }
+        }
+
+        // 保存玩家名称
+        function savePlayerName() {
+            const name = nameInput.value.trim() || 'GUEST';
+            if (name.length > 12) {
+                alert('Name must be 12 characters or less');
+                return;
+            }
+            
+            state.playerName = name.toUpperCase();
+            playerNameDisplay.textContent = state.playerName;
+            localStorage.setItem('snakePlayerName', state.playerName);
+        }
+
+        // 排行榜功能
+        function loadLeaderboard() {
+            const savedLeaderboard = localStorage.getItem('snakeLeaderboard');
+            if (savedLeaderboard) {
+                state.leaderboard = JSON.parse(savedLeaderboard);
+                updateLeaderboardDisplay();
+            }
+        }
+
+        function addToLeaderboard(name, score) {
+            // 确保名称不超过12个字符
+            name = name.substring(0, 12).toUpperCase();
+            
+            // 添加到排行榜
+            state.leaderboard.push({ name, score });
+            
+            // 按分数排序
+            state.leaderboard.sort((a, b) => b.score - a.score);
+            
+            // 保留前N名
+            if (state.leaderboard.length > config.maxLeaderboardEntries) {
+                state.leaderboard = state.leaderboard.slice(0, config.maxLeaderboardEntries);
+            }
+            
+            // 保存到本地存储
+            localStorage.setItem('snakeLeaderboard', JSON.stringify(state.leaderboard));
+            
+            // 更新显示
+            updateLeaderboardDisplay();
+        }
+
+        function updateLeaderboardDisplay() {
+            leaderboardList.innerHTML = '';
+            
+            state.leaderboard.forEach((entry, index) => {
+                const li = document.createElement('li');
+                li.textContent = `${index + 1}. ${entry.name}: ${entry.score}`;
+                leaderboardList.appendChild(li);
+            });
+        }
+
+        // 碰撞检测辅助函数
+        function checkCollision(obj1, obj2, radius) {
+            const dx = obj1.x - obj2.x;
+            const dy = obj1.y - obj2.y;
+            return Math.sqrt(dx * dx + dy * dy) < radius;
+        }
+
+        // 初始化游戏
+        initGame();
     </script>
 </body>
 </html>
