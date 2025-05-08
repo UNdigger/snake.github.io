@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Snake Evolution</title>
+    <style>
+        canvas {
+            border: 2px solid #4CAF50;
+            border-radius: 5px;
+            box-shadow: 0 0 20px #4CAF50;
+        }
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #1a1a1a;
+            overflow: hidden;
+        }
+        #score {
+            position: fixed;
+            top: 20px;
+            color: #4CAF50;
+            font-family: monospace;
+            font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">0</div>
+    <canvas id="gameCanvas" width="300" height="300"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const gridSize = 15;
+        const tileCount = canvas.width / gridSize;
+        
+        let snake = [{x: 10, y: 10}];
+        let food = generateFood();
+        let dx = 1, dy = 0;
+        let gameSpeed = 100;
+        let score = 0;
+        let highScore = 0;
+        let invincible = false;
+        let particles = [];
+
+        class Food {
+            constructor() {
+                this.type = Math.random() < 0.1 ? 'powerup' : 
+                           Math.random() < 0.3 ? 'slow' : 'normal';
+                this.x = Math.floor(Math.random() * tileCount);
+                this.y = Math.floor(Math.random() * tileCount);
+                this.angle = 0;
+            }
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 3 + 1;
+                this.speedX = Math.random() * 6 - 3;
+                this.speedY = Math.random() * 6 - 3;
+                this.alpha = 1;
+            }
+        }
+
+        function gameLoop() {
+            // Movement
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+            snake.unshift(head);
+
+            // Food collision
+            if (head.x === food.x && head.y === food.y) {
+                handleFoodConsumption();
+                createParticles(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2);
+                food = new Food();
+            } else {
+                snake.pop();
+            }
+
+            // Collision check
+            if (!invincible && checkCollision()) {
+                createParticles(head.x * gridSize + gridSize/2, head.y * gridSize + gridSize/2);
+                resetGame();
+            }
+
+            // Drawing
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawSnake();
+            drawFood();
+            drawParticles();
+
+            setTimeout(gameLoop, gameSpeed);
+        }
+
+        function drawSnake() {
+            snake.forEach((seg, i) => {
+                ctx.fillStyle = `hsl(${(i * 10) % 360}, 70%, 50%)`;
+                ctx.beginPath();
+                ctx.roundRect(seg.x * gridSize, seg.y * gridSize, gridSize-1, gridSize-1, 5);
+                ctx.fill();
+            });
+        }
+
+        function drawFood() {
+            ctx.fillStyle = food.type === 'powerup' ? '#FFD700' : 
+                          food.type === 'slow' ? '#00BFFF' : '#FF5252';
+            ctx.save();
+            ctx.translate(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2);
+            ctx.rotate(food.angle);
+            ctx.fillRect(-gridSize/2 + 2, -gridSize/2 + 2, gridSize-4, gridSize-4);
+            ctx.restore();
+            food.angle += 0.1;
+        }
+
+        function handleFoodConsumption() {
+            score += food.type === 'powerup' ? 50 : 
+                    food.type === 'slow' ? 20 : 10;
+            
+            scoreElement.textContent = `${score} [HIGH: ${highScore}]`;
+            
+            if(food.type === 'powerup') {
+                invincible = true;
+                setTimeout(() => invincible = false, 3000);
+            }
+            
+            gameSpeed = food.type === 'slow' ? gameSpeed + 20 : 
+                       food.type === 'powerup' ? Math.max(30, gameSpeed - 30) : 
+                       Math.max(50, gameSpeed - 2);
+        }
+
+        function createParticles(x, y) {
+            for(let i = 0; i < 10; i++) {
+                particles.push(new Particle(x, y));
+            }
+        }
+
+        function drawParticles() {
+            particles.forEach((particle, index) => {
+                ctx.fillStyle = `rgba(255,82,82,${particle.alpha})`;
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                particle.x += particle.speedX;
+                particle.y += particle.speedY;
+                particle.alpha -= 0.05;
+                
+                if(particle.alpha <= 0) particles.splice(index, 1);
+            });
+        }
+
+        function checkCollision() {
+            const head = snake[0];
+            return snake.some((seg, i) => i > 0 && seg.x === head.x && seg.y === head.y) ||
+                   head.x < 0 || head.x >= tileCount || 
+                   head.y < 0 || head.y >= tileCount;
+        }
+
+        function resetGame() {
+            highScore = Math.max(highScore, score);
+            snake = [{x: 10, y: 10}];
+            food = new Food();
+            dx = 1;
+            dy = 0;
+            gameSpeed = 100;
+            score = 0;
+            scoreElement.textContent = `0 [HIGH: ${highScore}]`;
+        }
+
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if((key === 'w' || key === 'arrowup') && dy === 0) { dx = 0; dy = -1; }
+            if((key === 's' || key === 'arrowdown') && dy === 0) { dx = 0; dy = 1; }
+            if((key === 'a' || key === 'arrowleft') && dx === 0) { dx = -1; dy = 0; }
+            if((key === 'd' || key === 'arrowright') && dx === 0) { dx = 1; dy = 0; }
+            if(key === '`') window.open('https://en.wikipedia.org/wiki/Snake_(video_game)');
+        });
+
+        gameLoop();
+    </script>
+</body>
+</html>

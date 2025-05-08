@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Snake Evolution</title>
+    <style>
+        canvas {
+            border: 2px solid #4CAF50;
+            border-radius: 5px;
+            box-shadow: 0 0 20px #4CAF50;
+        }
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #1a1a1a;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+        }
+        #score {
+            position: fixed;
+            top: 20px;
+            color: #4CAF50;
+            font-size: 24px;
+            text-shadow: 0 0 5px #4CAF50;
+        }
+        #gameOver {
+            position: fixed;
+            color: #FF5252;
+            font-size: 32px;
+            text-shadow: 0 0 10px #FF5252;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">0</div>
+    <div id="gameOver">GAME OVER</div>
+    <canvas id="gameCanvas" width="300" height="300"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const gameOverElement = document.getElementById('gameOver');
+        const gridSize = 15;
+        const tileCount = canvas.width / gridSize;
+        
+        let snake = [{x: 10, y: 10}];
+        let food = new Food();
+        let dx = 1, dy = 0;
+        let gameSpeed = 100;
+        let score = 0;
+        let highScore = 0;
+        let invincible = false;
+        let particles = [];
+        let gameRunning = true;
+        let lastRenderTime = 0;
+
+        class Food {
+            constructor() {
+                this.type = Math.random() < 0.1 ? 'powerup' : 
+                           Math.random() < 0.3 ? 'slow' : 'normal';
+                this.x = Math.floor(Math.random() * tileCount);
+                this.y = Math.floor(Math.random() * tileCount);
+                this.angle = 0;
+                // Ensure food doesn't spawn on snake
+                while(snake.some(seg => seg.x === this.x && seg.y === this.y)) {
+                    this.x = Math.floor(Math.random() * tileCount);
+                    this.y = Math.floor(Math.random() * tileCount);
+                }
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 3 + 1;
+                this.speedX = Math.random() * 6 - 3;
+                this.speedY = Math.random() * 6 - 3;
+                this.color = color || `hsl(${Math.random() * 360}, 100%, 50%)`;
+                this.alpha = 1;
+                this.life = 1;
+            }
+        }
+
+        function gameLoop(timestamp) {
+            if (!gameRunning) return;
+            
+            // Smooth movement timing
+            if (timestamp - lastRenderTime < gameSpeed) {
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+            lastRenderTime = timestamp;
+
+            // Movement
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+            snake.unshift(head);
+
+            // Food collision
+            if (head.x === food.x && head.y === food.y) {
+                handleFoodConsumption();
+                createParticles(
+                    food.x * gridSize + gridSize/2, 
+                    food.y * gridSize + gridSize/2,
+                    food.type === 'powerup' ? '#FFD700' : 
+                    food.type === 'slow' ? '#00BFFF' : '#FF5252'
+                );
+                food = new Food();
+            } else {
+                snake.pop();
+            }
+
+            // Collision check
+            if (!invincible && checkCollision()) {
+                gameOver();
+                return;
+            }
+
+            // Drawing
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawSnake();
+            drawFood();
+            drawParticles();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function drawSnake() {
+            snake.forEach((seg, i) => {
+                const hue = (i * 10 + score) % 360; // Dynamic color based on score
+                ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+                ctx.beginPath();
+                ctx.roundRect(seg.x * gridSize, seg.y * gridSize, gridSize-1, gridSize-1, 5);
+                ctx.fill();
+                
+                // Add eyes to head
+                if (i === 0) {
+                    ctx.fillStyle = 'white';
+                    const eyeSize = gridSize/4;
+                    const eyeOffset = gridSize/3;
+                    
+                    // Left eye
+                    ctx.beginPath();
+                    ctx.arc(
+                        seg.x * gridSize + (dx === 1 ? gridSize - eyeOffset : dx === -1 ? eyeOffset : gridSize/2), 
+                        seg.y * gridSize + (dy === 1 ? gridSize - eyeOffset : dy === -1 ? eyeOffset : gridSize/3), 
+                        eyeSize, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    // Right eye
+                    ctx.beginPath();
+                    ctx.arc(
+                        seg.x * gridSize + (dx === 1 ? gridSize - eyeOffset : dx === -1 ? eyeOffset : gridSize/2), 
+                        seg.y * gridSize + (dy === 1 ? gridSize - eyeOffset : dy === -1 ? eyeOffset : gridSize * 2/3), 
+                        eyeSize, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+            });
+        }
+
+        function drawFood() {
+            ctx.fillStyle = food.type === 'powerup' ? '#FFD700' : 
+                          food.type === 'slow' ? '#00BFFF' : '#FF5252';
+            ctx.save();
+            ctx.translate(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2);
+            ctx.rotate(food.angle);
+            
+            // Draw different shapes for different food types
+            if (food.type === 'powerup') {
+                // Star shape
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    ctx.lineTo(0, gridSize/2 - 2);
+                    ctx.translate(0, gridSize/2 - 2);
+                    ctx.rotate((Math.PI * 2) / 5);
+                    ctx.translate(0, -(gridSize/2 - 2));
+                    ctx.rotate(Math.PI / 5);
+                }
+                ctx.fill();
+            } else {
+                // Square for normal and slow food
+                ctx.fillRect(-gridSize/2 + 2, -gridSize/2 + 2, gridSize-4, gridSize-4);
+            }
+            
+            ctx.restore();
+            food.angle += 0.05;
+        }
+
+        function handleFoodConsumption() {
+            let points = 0;
+            switch(food.type) {
+                case 'powerup': 
+                    points = 50;
+                    invincible = true;
+                    setTimeout(() => invincible = false, 3000);
+                    break;
+                case 'slow': 
+                    points = 20;
+                    gameSpeed = Math.min(200, gameSpeed + 20);
+                    break;
+                default: 
+                    points = 10;
+                    gameSpeed = Math.max(50, gameSpeed - 2);
+            }
+            
+            score += points;
+            highScore = Math.max(highScore, score);
+            scoreElement.textContent = `${score} (HIGH: ${highScore})`;
+        }
+
+        function createParticles(x, y, color) {
+            for(let i = 0; i < 15; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function drawParticles() {
+            particles.forEach((particle, index) => {
+                ctx.fillStyle = `${particle.color.replace(')', `, ${particle.alpha})`)}`;
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                particle.x += particle.speedX;
+                particle.y += particle.speedY;
+                particle.alpha -= 0.02;
+                
+                if(particle.alpha <= 0) {
+                    particles.splice(index, 1);
+                }
+            });
+        }
+
+        function checkCollision() {
+            const head = snake[0];
+            
+            // Wall collision
+            if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+                return true;
+            }
+            
+            // Self collision (skip head)
+            for (let i = 4; i < snake.length; i++) {
+                if (snake[i].x === head.x && snake[i].y === head.y) {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            createParticles(
+                snake[0].x * gridSize + gridSize/2, 
+                snake[0].y * gridSize + gridSize/2,
+                '#FF5252'
+            );
+            
+            gameOverElement.style.display = 'block';
+            setTimeout(() => {
+                resetGame();
+                gameOverElement.style.display = 'none';
+                gameRunning = true;
+                requestAnimationFrame(gameLoop);
+            }, 1000);
+        }
+
+        function resetGame() {
+            snake = [{x: 10, y: 10}];
+            food = new Food();
+            dx = 1;
+            dy = 0;
+            gameSpeed = 100;
+            score = 0;
+            scoreElement.textContent = `0 (HIGH: ${highScore})`;
+            particles = [];
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (!gameRunning) return;
+            
+            const key = e.key.toLowerCase();
+            if((key === 'w' || key === 'arrowup') && dy === 0) { 
+                dx = 0; dy = -1; 
+            }
+            if((key === 's' || key === 'arrowdown') && dy === 0) { 
+                dx = 0; dy = 1; 
+            }
+            if((key === 'a' || key === 'arrowleft') && dx === 0) { 
+                dx = -1; dy = 0; 
+            }
+            if((key === 'd' || key === 'arrowright') && dx === 0) { 
+                dx = 1; dy = 0; 
+            }
+            if(key === '`') window.open('https://en.wikipedia.org/wiki/Snake_(video_game)');
+        });
+
+        // Start game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
